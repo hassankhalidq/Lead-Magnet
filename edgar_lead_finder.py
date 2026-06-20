@@ -33,11 +33,11 @@ Notes:
 import argparse
 from edgar import get_filings, set_identity
 
-IDENTITY_EMAIL = "Hassan H research@example.com"  # <-- put your real name/email here
+IDENTITY_EMAIL = "Hassan H hassankhalidq.com"  # <-- put your real name/email here, then DELETE before any future public push
 
 
 def find_form_d_leads(state: str, keyword: str, years, quarters, limit: int = 25):
-    set_identity(hassankhalidq@gmail.com)
+    set_identity(IDENTITY_EMAIL)
 
     print(f"Fetching Form D filings for {years} Q{quarters}...")
     filings = get_filings(year=years, quarter=quarters, form="D")
