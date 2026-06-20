@@ -33,7 +33,7 @@ Notes:
 import argparse
 from edgar import get_filings, set_identity
 
-IDENTITY_EMAIL = "Hassan H hassankhalidq.com"  # <-- put your real name/email here, then DELETE before any future public push
+IDENTITY_EMAIL = "Lead Research your_email_here@example.com"  # <-- replace with your real name/email LOCALLY only. Do not commit your real email to a public repo.
 
 
 def find_form_d_leads(state: str, keyword: str, years, quarters, limit: int = 25):
