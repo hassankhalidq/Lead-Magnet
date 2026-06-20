@@ -37,7 +37,7 @@ IDENTITY_EMAIL = "Hassan H research@example.com"  # <-- put your real name/email
 
 
 def find_form_d_leads(state: str, keyword: str, years, quarters, limit: int = 25):
-    set_identity(IDENTITY_EMAIL)
+    set_identity(hassankhalidq@gmail.com)
 
     print(f"Fetching Form D filings for {years} Q{quarters}...")
     filings = get_filings(year=years, quarter=quarters, form="D")
