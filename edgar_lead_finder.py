@@ -31,67 +31,54 @@ Notes:
 """
 
 import argparse
-from edgar import get_filings, set_identity
+from edgar import search_filings, set_identity
 
 IDENTITY_EMAIL = "Lead Research your_email_here@example.com"  # <-- replace with your real name/email LOCALLY only. Do not commit your real email to a public repo.
 
 
-def find_form_d_leads(state: str, keyword: str, years, quarters, limit: int = 25):
+def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, limit: int = 25):
+    """
+    Uses SEC EDGAR's full-text search (server-side), so we only download
+    filings that already match — not all Form D filings in the period.
+    This is dramatically faster than looping through every Form D filing.
+    """
     set_identity(IDENTITY_EMAIL)
 
-    print(f"Fetching Form D filings for {years} Q{quarters}...")
-    filings = get_filings(year=years, quarter=quarters, form="D")
-    print(f"Total Form D filings in this period: {len(filings)}")
+    query = f"{state} {keyword}"
+    print(f"Searching Form D filings for '{query}' between {start_date} and {end_date}...")
+
+    search_results = search_filings(
+        query,
+        forms="D",
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+    print(f"Search returned {len(search_results)} results.")
 
     results = []
-    keyword_lower = keyword.lower()
-
-    for filing in filings:
+    for r in search_results:
         try:
-            company_name = filing.company or ""
-            if keyword_lower not in company_name.lower():
-                # quick pre-filter on name; full check happens via parsed data below
-                pass
+            filing = r.get_filing()
+            data = filing.obj()
 
-            data = filing.obj()  # parsed Form D structured data
-            if data is None:
-                continue
+            related_persons = getattr(data, "related_persons", []) or []
+            names = [
+                f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+                for p in related_persons
+                if isinstance(p, dict)
+            ]
 
-            issuer_state = getattr(data, "issuer_state", None) or getattr(
-                data, "state_of_incorporation", None
+            results.append(
+                {
+                    "company": filing.company,
+                    "filing_date": filing.filing_date,
+                    "named_executives": names or ["(not parsed — open filing link)"],
+                    "filing_link": filing.filing_url,
+                }
             )
-            industry = str(getattr(data, "industry_group", "")) or ""
-
-            state_match = issuer_state and state.upper() in str(issuer_state).upper()
-            keyword_match = (
-                keyword_lower in company_name.lower()
-                or keyword_lower in industry.lower()
-            )
-
-            if state_match and keyword_match:
-                related_persons = getattr(data, "related_persons", []) or []
-                names = [
-                    f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
-                    for p in related_persons
-                    if isinstance(p, dict)
-                ]
-
-                results.append(
-                    {
-                        "company": company_name,
-                        "filing_date": filing.filing_date,
-                        "named_executives": names or ["(not parsed — open filing link)"],
-                        "industry": industry,
-                        "filing_link": filing.filing_url,
-                    }
-                )
-
-                if len(results) >= limit:
-                    break
-
         except Exception:
-            # Some Form D filings are malformed or use older schemas.
-            # Skip silently rather than crash the whole run.
+            # Some filings are malformed or use older schemas — skip, don't crash.
             continue
 
     return results
@@ -99,33 +86,32 @@ def find_form_d_leads(state: str, keyword: str, years, quarters, limit: int = 25
 
 def print_results(results):
     if not results:
-        print("\nNo matching filings found. Try a broader keyword or different quarter.")
+        print("\nNo matching filings found. Try a broader keyword or wider date range.")
         return
 
     print(f"\nFound {len(results)} matching filings:\n")
     for i, r in enumerate(results, 1):
         print(f"{i}. {r['company']}")
         print(f"   Filed: {r['filing_date']}")
-        print(f"   Industry: {r['industry']}")
         print(f"   Named on filing: {', '.join(r['named_executives'])}")
         print(f"   Filing link: {r['filing_link']}")
         print()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Find recent SEC Form D filings by state and keyword.")
-    parser.add_argument("--state", required=True, help="Two-letter state code, e.g. TX")
-    parser.add_argument("--keyword", required=True, help="Keyword to match in company name/industry, e.g. energy")
-    parser.add_argument("--year", type=int, required=True, help="Calendar year, e.g. 2026")
-    parser.add_argument("--quarter", type=int, nargs="+", required=True, help="Quarter(s), e.g. 1 2")
-    parser.add_argument("--limit", type=int, default=25, help="Max results to return")
+    parser = argparse.ArgumentParser(description="Find recent SEC Form D filings by state and keyword (fast, server-side search).")
+    parser.add_argument("--state", required=True, help="State name or abbreviation to search for, e.g. Texas")
+    parser.add_argument("--keyword", required=True, help="Keyword to search for, e.g. energy")
+    parser.add_argument("--start-date", required=True, help="Start date, format YYYY-MM-DD")
+    parser.add_argument("--end-date", required=True, help="End date, format YYYY-MM-DD")
+    parser.add_argument("--limit", type=int, default=25, help="Max results to return (max 100)")
     args = parser.parse_args()
 
     results = find_form_d_leads(
         state=args.state,
         keyword=args.keyword,
-        years=args.year,
-        quarters=args.quarter,
+        start_date=args.start_date,
+        end_date=args.end_date,
         limit=args.limit,
     )
     print_results(results)
