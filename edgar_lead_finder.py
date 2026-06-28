@@ -58,19 +58,21 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
 
     results = []
     excluded_fund_count = 0
+    fund_indicators = [
+        " lp", " l.p.", "fund", "partners", "capital partners",
+        "private capital", "investment fund",
+    ]
 
     for r in search_results:
         try:
             filing = r.get_filing()
             data = filing.obj()
 
-            industry_type = getattr(getattr(data, "industry_group", None), "industry_group_type", "") or ""
-
-            # Skip investment funds / PE vehicles — these are LPs raising capital
-            # to invest in other companies, not operating startups looking for
-            # their own product/Cephyron-style funding. This is the SEC's own
-            # standardized category, more reliable than a name keyword match.
-            if "Pooled Investment Fund" in industry_type:
+            company_lower = (filing.company or "").lower()
+            # Skip investment funds / PE/LP vehicles — these raise capital to
+            # invest in OTHER companies, they are not operating startups
+            # looking for product funding (the Cephyron-relevant kind).
+            if any(indicator in company_lower for indicator in fund_indicators):
                 excluded_fund_count += 1
                 continue
 
@@ -85,7 +87,6 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
                 {
                     "company": filing.company,
                     "filing_date": filing.filing_date,
-                    "industry": industry_type,
                     "named_executives": names or ["(not parsed — open filing link)"],
                     "filing_link": filing.filing_url,
                 }
@@ -95,7 +96,7 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
             continue
 
     if excluded_fund_count:
-        print(f"(Filtered out {excluded_fund_count} investment fund/LP filings — these raise capital to invest elsewhere, not operating startups.)")
+        print(f"(Filtered out {excluded_fund_count} investment fund/LP-style filings by name pattern — these raise capital to invest elsewhere, not operating startups.)")
 
     return results
 
@@ -109,7 +110,6 @@ def print_results(results):
     for i, r in enumerate(results, 1):
         print(f"{i}. {r['company']}")
         print(f"   Filed: {r['filing_date']}")
-        print(f"   Industry: {r['industry']}")
         print(f"   Named on filing: {', '.join(r['named_executives'])}")
         print(f"   Filing link: {r['filing_link']}")
         print()
