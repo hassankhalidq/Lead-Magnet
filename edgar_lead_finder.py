@@ -57,22 +57,35 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
     print(f"Search returned {len(search_results)} results.")
 
     results = []
+    excluded_fund_count = 0
+
     for r in search_results:
         try:
             filing = r.get_filing()
             data = filing.obj()
 
+            industry_type = getattr(getattr(data, "industry_group", None), "industry_group_type", "") or ""
+
+            # Skip investment funds / PE vehicles — these are LPs raising capital
+            # to invest in other companies, not operating startups looking for
+            # their own product/Cephyron-style funding. This is the SEC's own
+            # standardized category, more reliable than a name keyword match.
+            if "Pooled Investment Fund" in industry_type:
+                excluded_fund_count += 1
+                continue
+
             related_persons = getattr(data, "related_persons", []) or []
             names = [
-                f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+                f"{getattr(p, 'first_name', '') or ''} {getattr(p, 'last_name', '') or ''}".strip()
                 for p in related_persons
-                if isinstance(p, dict)
             ]
+            names = [n for n in names if n]  # drop any empty strings
 
             results.append(
                 {
                     "company": filing.company,
                     "filing_date": filing.filing_date,
+                    "industry": industry_type,
                     "named_executives": names or ["(not parsed — open filing link)"],
                     "filing_link": filing.filing_url,
                 }
@@ -80,6 +93,9 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
         except Exception:
             # Some filings are malformed or use older schemas — skip, don't crash.
             continue
+
+    if excluded_fund_count:
+        print(f"(Filtered out {excluded_fund_count} investment fund/LP filings — these raise capital to invest elsewhere, not operating startups.)")
 
     return results
 
@@ -93,6 +109,7 @@ def print_results(results):
     for i, r in enumerate(results, 1):
         print(f"{i}. {r['company']}")
         print(f"   Filed: {r['filing_date']}")
+        print(f"   Industry: {r['industry']}")
         print(f"   Named on filing: {', '.join(r['named_executives'])}")
         print(f"   Filing link: {r['filing_link']}")
         print()
