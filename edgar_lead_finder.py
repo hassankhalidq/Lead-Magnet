@@ -31,9 +31,71 @@ Notes:
 """
 
 import argparse
+import csv
+import os
+from datetime import datetime
 from edgar import search_filings, set_identity
 
 IDENTITY_EMAIL = "Lead Research your_email_here@example.com"  # <-- replace with your real name/email LOCALLY only. Do not commit your real email to a public repo.
+
+SEEN_LEADS_FILE = "seen_leads.csv"  # lives next to this script; tracks every lead ever shown, across runs
+
+
+def estimate_stage(total_offering_amount):
+    """
+    Rough stage guess based on the dollar amount being raised, per Form D's
+    own disclosed total_offering_amount field. This is a heuristic, not a
+    certainty — a $2M raise could be a small seed round or a bridge, always
+    verify with a real search before treating this as fact.
+    """
+    if not total_offering_amount:
+        return "Unknown"
+    try:
+        amount = float(str(total_offering_amount).replace(",", "").replace("$", ""))
+    except (ValueError, TypeError):
+        return "Unknown"
+
+    if amount <= 1_000_000:
+        return "Likely pre-seed"
+    elif amount <= 5_000_000:
+        return "Likely seed"
+    elif amount <= 20_000_000:
+        return "Likely Series A"
+    else:
+        return "Likely Series B+ (probably too late-stage for Ignite/Boost)"
+
+
+def load_seen_leads():
+    """Returns a set of company names (lowercased) already shown in a past run."""
+    if not os.path.exists(SEEN_LEADS_FILE):
+        return set()
+    seen = set()
+    with open(SEEN_LEADS_FILE, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            seen.add(row["company"].strip().lower())
+    return seen
+
+
+def append_to_seen_leads(results):
+    """Appends newly-shown leads to the persistent CSV so future runs can skip them."""
+    file_exists = os.path.exists(SEEN_LEADS_FILE)
+    with open(SEEN_LEADS_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["company", "first_seen_date", "filing_date", "matched_state", "estimated_stage", "filing_link", "status"])
+        if not file_exists:
+            writer.writeheader()
+        for r in results:
+            writer.writerow(
+                {
+                    "company": r["company"],
+                    "first_seen_date": datetime.now().strftime("%Y-%m-%d"),
+                    "filing_date": r["filing_date"],
+                    "matched_state": r["matched_state"],
+                    "estimated_stage": r["estimated_stage"],
+                    "filing_link": r["filing_link"],
+                    "status": "Not yet",  # you edit this column yourself: Contacted / Pass / etc.
+                }
+            )
 
 
 def _search_one_state(state: str, keyword: str, start_date: str, end_date: str, limit: int):
@@ -78,6 +140,10 @@ def _search_one_state(state: str, keyword: str, start_date: str, end_date: str, 
             ]
             names = [n for n in names if n]  # drop any empty strings
 
+            offering_data = getattr(data, "offering_data", None)
+            sales_amounts = getattr(offering_data, "offering_sales_amounts", None) if offering_data else None
+            total_offering_amount = getattr(sales_amounts, "total_offering_amount", None) if sales_amounts else None
+
             results.append(
                 {
                     "company": filing.company,
@@ -85,6 +151,8 @@ def _search_one_state(state: str, keyword: str, start_date: str, end_date: str, 
                     "named_executives": names or ["(not parsed — open filing link)"],
                     "filing_link": filing.filing_url,
                     "matched_state": state,
+                    "total_offering_amount": total_offering_amount,
+                    "estimated_stage": estimate_stage(total_offering_amount),
                 }
             )
         except Exception:
@@ -101,7 +169,8 @@ def find_form_d_leads(states, keyword: str, start_date: str, end_date: str, limi
     """
     Runs one server-side search per state (since EDGAR's search doesn't
     support multi-state queries directly), then combines and de-duplicates
-    results by company name across all states searched.
+    results by company name across all states searched. Also skips any
+    company already shown in a previous run (tracked in seen_leads.csv).
     """
     set_identity(IDENTITY_EMAIL)
 
@@ -126,21 +195,35 @@ def find_form_d_leads(states, keyword: str, start_date: str, end_date: str, limi
     if duplicates_removed:
         print(f"\n(Removed {duplicates_removed} duplicate company entries across states.)")
 
-    return deduped
+    # Skip anything already shown in a previous run of this script
+    already_seen = load_seen_leads()
+    new_results = [r for r in deduped if r["company"].strip().lower() not in already_seen]
+    skipped_count = len(deduped) - len(new_results)
+    if skipped_count:
+        print(f"(Skipped {skipped_count} companies already seen in a previous run — check {SEEN_LEADS_FILE} for their status.)")
+
+    if new_results:
+        append_to_seen_leads(new_results)
+
+    return new_results
 
 
 def print_results(results):
     if not results:
-        print("\nNo matching filings found. Try a broader keyword or wider date range.")
+        print("\nNo new matching filings found (or everything found was already seen in a previous run — check seen_leads.csv).")
         return
 
-    print(f"\nFound {len(results)} matching filings:\n")
+    print(f"\nFound {len(results)} NEW matching filings:\n")
     for i, r in enumerate(results, 1):
+        amount_str = f"${r['total_offering_amount']}" if r['total_offering_amount'] else "amount not disclosed"
         print(f"{i}. {r['company']}  [{r['matched_state']}]")
-        print(f"   Filed: {r['filing_date']}")
+        print(f"   Filed: {r['filing_date']}  |  Raising: {amount_str}  |  Stage guess: {r['estimated_stage']}")
         print(f"   Named on filing: {', '.join(r['named_executives'])}")
         print(f"   Filing link: {r['filing_link']}")
         print()
+
+    print(f"All {len(results)} leads above have been added to {SEEN_LEADS_FILE}.")
+    print(f"Open that file to track status (Contacted / Pass / etc.) — future runs will skip anything already in it.")
 
 
 if __name__ == "__main__":
