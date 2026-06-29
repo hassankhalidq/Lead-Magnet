@@ -15,8 +15,8 @@ Setup (one time):
     pip install edgartools
 
 Usage:
-    python edgar_lead_finder.py --state TX --keyword energy --year 2026 --quarter 1 2
-    python edgar_lead_finder.py --state TX --keyword climate --year 2026 --quarter 2
+    python edgar_lead_finder.py --state Texas --keyword energy --start-date 2026-01-01 --end-date 2026-06-01
+    python edgar_lead_finder.py --state California "New York" Massachusetts Texas Colorado Washington --keyword "climate tech" --start-date 2026-01-01 --end-date 2026-06-01 --limit 100
 
 Notes:
 - SEC EDGAR is a free, public US government database. No API key required.
@@ -36,16 +36,11 @@ from edgar import search_filings, set_identity
 IDENTITY_EMAIL = "Lead Research your_email_here@example.com"  # <-- replace with your real name/email LOCALLY only. Do not commit your real email to a public repo.
 
 
-def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, limit: int = 25):
-    """
-    Uses SEC EDGAR's full-text search (server-side), so we only download
-    filings that already match — not all Form D filings in the period.
-    This is dramatically faster than looping through every Form D filing.
-    """
-    set_identity(IDENTITY_EMAIL)
-
+def _search_one_state(state: str, keyword: str, start_date: str, end_date: str, limit: int):
+    """Runs one server-side search for a single state and returns parsed,
+    fund-filtered results (this is the original single-state logic)."""
     query = f"{state} {keyword}"
-    print(f"Searching Form D filings for '{query}' between {start_date} and {end_date}...")
+    print(f"  Searching '{query}'...")
 
     search_results = search_filings(
         query,
@@ -54,7 +49,7 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
         end_date=end_date,
         limit=limit,
     )
-    print(f"Search returned {len(search_results)} results.")
+    print(f"    -> {len(search_results)} raw results")
 
     results = []
     excluded_fund_count = 0
@@ -89,6 +84,7 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
                     "filing_date": filing.filing_date,
                     "named_executives": names or ["(not parsed — open filing link)"],
                     "filing_link": filing.filing_url,
+                    "matched_state": state,
                 }
             )
         except Exception:
@@ -96,9 +92,41 @@ def find_form_d_leads(state: str, keyword: str, start_date: str, end_date: str, 
             continue
 
     if excluded_fund_count:
-        print(f"(Filtered out {excluded_fund_count} investment fund/LP-style filings by name pattern — these raise capital to invest elsewhere, not operating startups.)")
+        print(f"    (filtered out {excluded_fund_count} fund/LP-style filings)")
 
     return results
+
+
+def find_form_d_leads(states, keyword: str, start_date: str, end_date: str, limit: int = 25):
+    """
+    Runs one server-side search per state (since EDGAR's search doesn't
+    support multi-state queries directly), then combines and de-duplicates
+    results by company name across all states searched.
+    """
+    set_identity(IDENTITY_EMAIL)
+
+    print(f"Searching Form D filings across {len(states)} state(s) between {start_date} and {end_date}...\n")
+
+    all_results = []
+    for state in states:
+        state_results = _search_one_state(state, keyword, start_date, end_date, limit)
+        all_results.extend(state_results)
+
+    # De-duplicate by company name (same company can surface in more than
+    # one state search if e.g. it mentions multiple locations in its filing)
+    seen_companies = set()
+    deduped = []
+    for r in all_results:
+        key = r["company"].strip().lower() if r["company"] else ""
+        if key and key not in seen_companies:
+            seen_companies.add(key)
+            deduped.append(r)
+
+    duplicates_removed = len(all_results) - len(deduped)
+    if duplicates_removed:
+        print(f"\n(Removed {duplicates_removed} duplicate company entries across states.)")
+
+    return deduped
 
 
 def print_results(results):
@@ -108,7 +136,7 @@ def print_results(results):
 
     print(f"\nFound {len(results)} matching filings:\n")
     for i, r in enumerate(results, 1):
-        print(f"{i}. {r['company']}")
+        print(f"{i}. {r['company']}  [{r['matched_state']}]")
         print(f"   Filed: {r['filing_date']}")
         print(f"   Named on filing: {', '.join(r['named_executives'])}")
         print(f"   Filing link: {r['filing_link']}")
@@ -116,16 +144,16 @@ def print_results(results):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Find recent SEC Form D filings by state and keyword (fast, server-side search).")
-    parser.add_argument("--state", required=True, help="State name or abbreviation to search for, e.g. Texas")
+    parser = argparse.ArgumentParser(description="Find recent SEC Form D filings across one or more states and a keyword (fast, server-side search).")
+    parser.add_argument("--state", required=True, nargs="+", help="One or more state names, e.g. --state Texas California \"New York\"")
     parser.add_argument("--keyword", required=True, help="Keyword to search for, e.g. energy")
     parser.add_argument("--start-date", required=True, help="Start date, format YYYY-MM-DD")
     parser.add_argument("--end-date", required=True, help="End date, format YYYY-MM-DD")
-    parser.add_argument("--limit", type=int, default=25, help="Max results to return (max 100)")
+    parser.add_argument("--limit", type=int, default=25, help="Max results PER STATE (SEC caps this around 100)")
     args = parser.parse_args()
 
     results = find_form_d_leads(
-        state=args.state,
+        states=args.state,
         keyword=args.keyword,
         start_date=args.start_date,
         end_date=args.end_date,
