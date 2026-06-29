@@ -28,6 +28,23 @@ Notes:
 - "keyword" is matched against the company name and industry description.
   Form D's industry field is broad (e.g. "Other Energy"), so a keyword like
   "energy" or "climate" is more reliable than a narrow SIC code.
+
+Keyword guidance (learned from testing):
+- GOOD single words: energy, solar, hydrogen, battery, carbon — specific
+  enough to mostly avoid noise, common enough to actually appear in filings.
+- BAD single words: "storage" alone pulls in real-estate self-storage
+  businesses (literal storage units), not energy storage startups. Use a
+  two-word phrase instead if you want that niche, e.g. "energy storage" or
+  "battery storage".
+- BAD phrases: multi-word marketing buzzwords like "climate tech" almost
+  never appear verbatim inside a legal filing's text, so they return 0
+  results across most states. Filings use plain technical/business language,
+  not pitch-deck language — search for what the company actually does
+  (solar, hydrogen, carbon capture), not the category investors use to
+  describe it.
+- When trying a new keyword, skim a few of its results before trusting the
+  count — a high hit count can mean a real niche OR an unrelated industry
+  that happens to share the word.
 """
 
 import argparse
